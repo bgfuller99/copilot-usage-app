@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildDataset, summarise } from './lib/aggregate';
 import { summaryToCsv } from './lib/csv';
 import { defaultMapping, METRICS, type CanonicalMetric, type MetricTarget } from './lib/metrics';
@@ -8,31 +8,52 @@ import { SummaryTable } from './components/SummaryTable';
 import { FeatureChart, OverviewChart } from './components/Charts';
 import { PALETTE } from './lib/format';
 import { MappingPanel } from './components/MappingPanel';
+import { clearState, DEFAULT_PREFS, loadState, saveState, type Prefs, type StoredFile } from './lib/persist';
 
 interface LoadedFile {
   id: string;
   name: string;
   size: number;
+  /** Raw workbook bytes, kept only for successfully parsed files so they can be restored locally. */
+  bytes?: ArrayBuffer;
   parsed?: ParsedFile;
   error?: { message: string; hint: string };
 }
 
 const ALL = '__all__';
+const SCROLL_KEY = 'copilot-usage-app:scrollY';
 
-async function readFile(file: File): Promise<LoadedFile> {
-  const base = { id: `${file.name}:${file.size}:${file.lastModified}`, name: file.name, size: file.size };
+function toLoaded(id: string, name: string, bytes: ArrayBuffer): LoadedFile {
+  const base = { id, name, size: bytes.byteLength };
   try {
-    if (file.size > MAX_FILE_BYTES)
-      throw new WorkbookError(`"${file.name}" is larger than 25 MB.`, 'Split the export into smaller files and upload them together.');
-    const parsed = parseWorkbook(await file.arrayBuffer(), file.name);
-    return { ...base, parsed };
+    return { ...base, bytes, parsed: parseWorkbook(bytes, name) };
   } catch (e) {
     const err =
       e instanceof WorkbookError
         ? { message: e.message, hint: e.hint }
-        : { message: `Unexpected error reading "${file.name}": ${(e as Error).message}`, hint: 'Try re-exporting the file.' };
+        : { message: `Unexpected error reading "${name}": ${(e as Error).message}`, hint: 'Try re-exporting the file.' };
     return { ...base, error: err };
   }
+}
+
+/** Content-based id so the same workbook (uploaded, restored or demo) is never listed twice. */
+async function contentId(bytes: ArrayBuffer): Promise<string> {
+  if (!crypto?.subtle) return `len:${bytes.byteLength}`;
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...hash].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function readFile(file: File): Promise<LoadedFile> {
+  const id = `${file.name}:${file.size}:${file.lastModified}`;
+  if (file.size > MAX_FILE_BYTES)
+    return {
+      id,
+      name: file.name,
+      size: file.size,
+      error: { message: `"${file.name}" is larger than 25 MB.`, hint: 'Split the export into smaller files and upload them together.' },
+    };
+  const bytes = await file.arrayBuffer();
+  return toLoaded(await contentId(bytes), file.name, bytes);
 }
 
 function download(name: string, text: string) {
@@ -45,30 +66,66 @@ function download(name: string, text: string) {
 export default function App() {
   const [files, setFiles] = useState<LoadedFile[]>([]);
   const [busy, setBusy] = useState(false);
-  const [overrides, setOverrides] = useState<Record<string, MetricTarget>>({});
-  const [account, setAccount] = useState<string>(ALL);
-  const [hidden, setHidden] = useState<string[]>([]);
-  const [chartMetric, setChartMetric] = useState<CanonicalMetric>('aiUnits');
+  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  // Until the locally stored session is restored, nothing is saved (avoids overwriting it with an empty state).
+  const [restored, setRestored] = useState(false);
+  const [storageNote, setStorageNote] = useState<string | null>(null);
+  const { overrides, account, hidden, chartMetric } = prefs;
+  const setAccount = (v: string) => setPrefs((p) => ({ ...p, account: v }));
+  const setChartMetric = (v: CanonicalMetric) => setPrefs((p) => ({ ...p, chartMetric: v }));
+  const setHidden = (fn: (h: string[]) => string[]) => setPrefs((p) => ({ ...p, hidden: fn(p.hidden) }));
+  const setOverride = (label: string, t: MetricTarget) => setPrefs((p) => ({ ...p, overrides: { ...p.overrides, [label]: t } }));
 
-  const onFiles = useCallback(async (list: File[]) => {
-    setBusy(true);
-    const loaded = await Promise.all(list.map(readFile));
+  const addLoaded = useCallback((loaded: LoadedFile[]) => {
     setFiles((prev) => [...prev.filter((p) => !loaded.some((l) => l.id === p.id)), ...loaded]);
-    setBusy(false);
   }, []);
+
+  const onFiles = useCallback(
+    async (list: File[]) => {
+      setBusy(true);
+      addLoaded(await Promise.all(list.map(readFile)));
+      setBusy(false);
+    },
+    [addLoaded],
+  );
+
+  // Restore the previous local session (workbooks + selections) after reloads or remounts.
+  useEffect(() => {
+    let cancelled = false;
+    loadState()
+      .then((state) => {
+        if (cancelled || !state) return;
+        addLoaded(state.files.map((f) => toLoaded(f.id, f.name, f.bytes)));
+        setPrefs(state.prefs);
+      })
+      .catch(() => !cancelled && setStorageNote('Local session storage is unavailable; data will not survive a page reload.'))
+      .finally(() => !cancelled && setRestored(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [addLoaded]);
+
+  useEffect(() => {
+    if (!restored) return;
+    const stored: StoredFile[] = files.filter((f) => f.parsed && f.bytes).map((f) => ({ id: f.id, name: f.name, bytes: f.bytes! }));
+    saveState(stored, prefs).catch(() =>
+      setStorageNote('Could not save this session locally; it will not survive a page reload.'),
+    );
+  }, [files, prefs, restored]);
 
   // Dev-only: ?demo=local loads the workbook the dev server was started with (LOCAL_DEMO_XLSX).
   const [demoError, setDemoError] = useState<string | null>(null);
   useEffect(() => {
-    if (!import.meta.env.DEV || new URLSearchParams(location.search).get('demo') !== 'local') return;
+    if (!restored || !import.meta.env.DEV || new URLSearchParams(location.search).get('demo') !== 'local') return;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('/__local-demo.xlsx', { cache: 'no-store' });
         if (!res.ok) throw new Error(await res.text());
         const name = decodeURIComponent(res.headers.get('X-Filename') ?? 'demo.xlsx');
-        const file = new File([await res.blob()], name, { lastModified: 0 });
-        if (!cancelled) await onFiles([file]);
+        const bytes = await res.arrayBuffer();
+        const id = await contentId(bytes);
+        if (!cancelled) addLoaded([toLoaded(id, name, bytes)]);
       } catch (e) {
         if (!cancelled) setDemoError(`Local demo workbook could not be loaded: ${(e as Error).message}`);
       }
@@ -76,14 +133,37 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [onFiles]);
+  }, [restored, addLoaded]);
+
+  // Keep the scroll position across reloads: content renders asynchronously, so restore it once data is back.
+  const hasData = files.some((f) => f.parsed);
+  useEffect(() => {
+    history.scrollRestoration = 'manual';
+    let t = 0;
+    const onScroll = () => {
+      clearTimeout(t);
+      t = window.setTimeout(() => sessionStorage.setItem(SCROLL_KEY, String(Math.round(scrollY))), 100);
+    };
+    addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      clearTimeout(t);
+      removeEventListener('scroll', onScroll);
+    };
+  }, []);
+  const scrollRestored = useRef(false);
+  useEffect(() => {
+    if (!restored || scrollRestored.current || !hasData) return;
+    scrollRestored.current = true;
+    const y = Number(sessionStorage.getItem(SCROLL_KEY));
+    if (y > 0) requestAnimationFrame(() => requestAnimationFrame(() => scrollTo(0, y)));
+  }, [restored, hasData]);
 
   const reset = () => {
     setFiles([]);
-    setOverrides({});
-    setAccount(ALL);
-    setHidden([]);
-    setChartMetric('aiUnits');
+    setPrefs(DEFAULT_PREFS);
+    sessionStorage.removeItem(SCROLL_KEY);
+    scrollTo(0, 0);
+    clearState().catch(() => undefined);
   };
 
   const good = useMemo(() => files.filter((f) => f.parsed).map((f) => f.parsed!), [files]);
@@ -119,7 +199,10 @@ export default function App() {
           <h1>Copilot usage by feature</h1>
           <p className="sub">
             Weekly per-feature summaries from Copilot usage exports.{' '}
-            <span className="privacy">🔒 Files are processed entirely in your browser — nothing is uploaded.</span>
+            <span className="privacy">
+              🔒 Files are processed entirely in your browser — nothing is uploaded. Your session is kept in this browser
+              until you press Reset.
+            </span>
           </p>
         </div>
         {files.length > 0 && (
@@ -135,6 +218,7 @@ export default function App() {
       </header>
 
       <DropZone onFiles={onFiles} busy={busy} compact={files.length > 0} />
+      {storageNote && <p className="notice subtle">{storageNote}</p>}
       {demoError && (
         <p className="notice warn" role="alert">
           {demoError}
@@ -243,7 +327,7 @@ export default function App() {
           <MappingPanel
             labels={data.metricLabels}
             mapping={mapping}
-            onChange={(l, t) => setOverrides((o) => ({ ...o, [l]: t }))}
+            onChange={setOverride}
           />
 
           {summaries.length > 1 && (

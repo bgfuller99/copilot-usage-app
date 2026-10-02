@@ -2,7 +2,7 @@
 
 A browser-only dashboard that turns Copilot usage Excel exports (e.g. **“View by Copilot Feature and Model”**) into weekly per-feature summary tables and bar charts.
 
-**Privacy:** workbooks are parsed entirely in your browser (SheetJS). Nothing is uploaded to a server and nothing is stored. Do not commit customer exports to this repository — `*.xlsx`, `*.xls` and `*.csv` are git-ignored.
+**Privacy:** workbooks are parsed entirely in your browser (SheetJS). Nothing is uploaded to a server. So that a page reload (or a dev-server restart/hot reload) does not lose your work, the uploaded workbooks and your selections are kept in this browser's IndexedDB, and the scroll position in session storage, until you press **Reset**. Do not commit customer exports to this repository — `*.xlsx`, `*.xls` and `*.csv` are git-ignored.
 
 ## Run
 
