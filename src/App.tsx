@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildDataset, summarise } from './lib/aggregate';
 import { summaryToCsv } from './lib/csv';
 import { defaultMapping, METRICS, type CanonicalMetric, type MetricTarget } from './lib/metrics';
@@ -57,6 +57,27 @@ export default function App() {
     setBusy(false);
   }, []);
 
+  // Dev-only: ?demo=local loads the workbook the dev server was started with (LOCAL_DEMO_XLSX).
+  const [demoError, setDemoError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV || new URLSearchParams(location.search).get('demo') !== 'local') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/__local-demo.xlsx', { cache: 'no-store' });
+        if (!res.ok) throw new Error(await res.text());
+        const name = decodeURIComponent(res.headers.get('X-Filename') ?? 'demo.xlsx');
+        const file = new File([await res.blob()], name, { lastModified: 0 });
+        if (!cancelled) await onFiles([file]);
+      } catch (e) {
+        if (!cancelled) setDemoError(`Local demo workbook could not be loaded: ${(e as Error).message}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [onFiles]);
+
   const reset = () => {
     setFiles([]);
     setOverrides({});
@@ -114,6 +135,11 @@ export default function App() {
       </header>
 
       <DropZone onFiles={onFiles} busy={busy} compact={files.length > 0} />
+      {demoError && (
+        <p className="notice warn" role="alert">
+          {demoError}
+        </p>
+      )}
 
       {files.length > 0 && (
         <ul className="files" aria-label="Uploaded files">

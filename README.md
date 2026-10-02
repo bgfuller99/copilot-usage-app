@@ -56,3 +56,14 @@ src/lib/decimal.ts    exact decimal sums
 src/lib/metrics.ts    canonical metrics + label mapping
 src/lib/csv.ts        summary CSV export
 ```
+
+## Local demo (dev only)
+
+To auto-load a workbook from your machine without uploading it:
+
+```bash
+LOCAL_DEMO_XLSX="/path/to/export.xlsx" npm run dev -- --port 5180
+# open http://localhost:5180/?demo=local
+```
+
+The dev server streams that file at `/__local-demo.xlsx`; it is never copied into the repo or production build.
