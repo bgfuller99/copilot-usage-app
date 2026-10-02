@@ -36,10 +36,12 @@ function localDemo(): Plugin {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // GitHub Pages serves the project site from /<repo>/; override with BASE_PATH if hosting elsewhere.
+  base: command === 'build' ? (process.env.BASE_PATH ?? '/copilot-usage-app/') : '/',
   plugins: [react(), localDemo()],
   build: {
     // SheetJS + Recharts make a ~1 MB (≈300 KB gzip) single bundle; acceptable for a local tool.
     chunkSizeWarningLimit: 1200,
   },
-})
+}))

@@ -67,3 +67,13 @@ LOCAL_DEMO_XLSX="/path/to/export.xlsx" npm run dev -- --port 5180
 ```
 
 The dev server streams that file at `/__local-demo.xlsx`; it is never copied into the repo or production build.
+
+## Deploy to GitHub Pages
+
+`.github/workflows/deploy-pages.yml` tests, builds and deploys `dist/` to GitHub Pages on every push to `main` (or manually via *Run workflow*). Production builds use the base path `/copilot-usage-app/` (override with `BASE_PATH=/other/ npm run build`). The workflow fails if any local-demo code, local paths or data files end up in the build.
+
+One-time setup: **Settings → Pages → Source: GitHub Actions**. Site URL: `https://bgfuller99.github.io/copilot-usage-app/`.
+
+Notes:
+- Publishing Pages from a **private** repository requires GitHub Pro, Team or Enterprise. On GitHub Free, Pages is only available for public repositories.
+- A Pages site is publicly reachable unless access control is available (Enterprise Cloud). This is a static app with no data in it. Spreadsheets you open are processed only in your browser and are never sent to GitHub. The `?demo=local` loader exists only in the dev server.
