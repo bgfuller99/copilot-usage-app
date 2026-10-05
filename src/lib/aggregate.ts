@@ -1,4 +1,4 @@
-import { add, equals, sum, toPlainString, ZERO, type Decimal } from './decimal';
+import { add, compare, equals, sum, toPlainString, ZERO, type Decimal } from './decimal';
 import { METRICS, type CanonicalMetric, type MetricTarget } from './metrics';
 import type { ParsedFile, UsageRecord } from './parse';
 
@@ -181,4 +181,75 @@ export function summarise(
     });
     return { feature, rows };
   });
+}
+
+export const NO_MODEL = '(no model)';
+
+export interface ModelRow {
+  model: string;
+  /** One value per period in the summary's periods (missing weeks are zero). */
+  values: Decimal[];
+  total: Decimal;
+  byFeature: { feature: string; value: Decimal }[];
+}
+
+export interface ModelSummary {
+  metric: CanonicalMetric;
+  state: 'value' | 'unavailable' | 'no-data';
+  periods: Period[];
+  /** Every model with data in scope, largest total first. */
+  rows: ModelRow[];
+  grandTotal: Decimal;
+  features: string[];
+}
+
+export interface ModelSummaryOptions extends SummaryOptions {
+  metric: CanonicalMetric;
+  /** Restrict to one period key; null/undefined = all periods. */
+  period?: string | null;
+}
+
+/** Per-model totals for one metric, summed across the selected features (and accounts). */
+export function summariseModels(
+  data: Dataset,
+  mapping: Record<string, MetricTarget>,
+  opts: ModelSummaryOptions,
+): ModelSummary {
+  const periods = opts.period ? data.periods.filter((p) => p.key === opts.period) : data.periods;
+  const features = data.features.filter((f) => !opts.features || opts.features.includes(f));
+  const base = { metric: opts.metric, periods, features, rows: [] as ModelRow[], grandTotal: ZERO };
+  if (!data.records.some((r) => mapping[r.metricLabel] === opts.metric)) return { ...base, state: 'unavailable' };
+
+  const periodIndex = new Map(periods.map((p, i) => [p.key, i]));
+  const byModel = new Map<string, { buckets: Decimal[][]; feat: Map<string, Decimal[]> }>();
+  for (const r of data.records) {
+    if (mapping[r.metricLabel] !== opts.metric || !features.includes(r.feature)) continue;
+    if (opts.account && r.account !== opts.account) continue;
+    const i = periodIndex.get(data.periodOf[r.date]);
+    if (i === undefined) continue;
+    const model = r.model || NO_MODEL;
+    let m = byModel.get(model);
+    if (!m) byModel.set(model, (m = { buckets: periods.map(() => []), feat: new Map() }));
+    m.buckets[i].push(r.value);
+    const f = m.feat.get(r.feature) ?? [];
+    f.push(r.value);
+    m.feat.set(r.feature, f);
+  }
+  const rows = [...byModel].map<ModelRow>(([model, m]) => {
+    const values = m.buckets.map((b) => (b.length ? sum(b) : ZERO));
+    return {
+      model,
+      values,
+      total: sum(values),
+      byFeature: features.filter((f) => m.feat.has(f)).map((f) => ({ feature: f, value: sum(m.feat.get(f)!) })),
+    };
+  });
+  rows.sort((a, b) => compare(b.total, a.total) || a.model.localeCompare(b.model));
+  if (!rows.length) return { ...base, state: 'no-data' };
+  return { ...base, state: 'value', rows, grandTotal: sum(rows.map((r) => r.total)) };
+}
+
+/** Models whose total in the selected range is at least `min` (all models when min is null). */
+export function filterModels(rows: ModelRow[], min: Decimal | null): ModelRow[] {
+  return min ? rows.filter((r) => compare(r.total, min) >= 0) : rows;
 }

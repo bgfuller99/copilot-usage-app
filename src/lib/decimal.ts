@@ -66,3 +66,20 @@ export function toPlainString(d: Decimal): string {
 export function toNumber(d: Decimal): number {
   return Number(toPlainString(d));
 }
+
+/** Exact comparison: negative when a < b, 0 when equal, positive when a > b. */
+export function compare(a: Decimal, b: Decimal): number {
+  const scale = Math.max(a.scale, b.scale);
+  const d = rescale(a, scale) - rescale(b, scale);
+  return d < 0n ? -1 : d > 0n ? 1 : 0;
+}
+
+/** Parse a user-typed threshold such as "1,000", "$25.50" or "2.5k". Returns null when blank/invalid. */
+export function decimalFromInput(text: string): Decimal | null {
+  const m = /^\s*\$?\s*([\d,]*\.?\d*)\s*([kmb]?)\s*$/i.exec(text);
+  if (!m || !/\d/.test(m[1])) return null;
+  const base = decimalFromPlain(m[1].replace(/,/g, ''));
+  if (!base) return null;
+  const exp = { '': 0, k: 3, m: 6, b: 9 }[m[2].toLowerCase() as '' | 'k' | 'm' | 'b'];
+  return { int: base.int * 10n ** BigInt(exp), scale: base.scale };
+}

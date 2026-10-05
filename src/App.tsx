@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { buildDataset, summarise } from './lib/aggregate';
-import { summaryToCsv } from './lib/csv';
+import { buildDataset, summarise, summariseModels, type ModelRow } from './lib/aggregate';
+import { modelsToCsv, summaryToCsv } from './lib/csv';
 import { defaultMapping, METRICS, type CanonicalMetric, type MetricTarget } from './lib/metrics';
 import { MAX_FILE_BYTES, parseWorkbook, WorkbookError, type ParsedFile } from './lib/parse';
 import { DropZone } from './components/DropZone';
@@ -8,6 +8,7 @@ import { SummaryTable } from './components/SummaryTable';
 import { FeatureChart, OverviewChart } from './components/Charts';
 import { PALETTE } from './lib/format';
 import { MappingPanel } from './components/MappingPanel';
+import { ModelUsage } from './components/ModelUsage';
 import { clearState, DEFAULT_PREFS, loadState, saveState, type Prefs, type StoredFile } from './lib/persist';
 
 interface LoadedFile {
@@ -70,7 +71,8 @@ export default function App() {
   // Until the locally stored session is restored, nothing is saved (avoids overwriting it with an empty state).
   const [restored, setRestored] = useState(false);
   const [storageNote, setStorageNote] = useState<string | null>(null);
-  const { overrides, account, hidden, chartMetric } = prefs;
+  const { overrides, account, hidden, chartMetric, view } = prefs;
+  const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const setAccount = (v: string) => setPrefs((p) => ({ ...p, account: v }));
   const setChartMetric = (v: CanonicalMetric) => setPrefs((p) => ({ ...p, chartMetric: v }));
   const setHidden = (fn: (h: string[]) => string[]) => setPrefs((p) => ({ ...p, hidden: fn(p.hidden) }));
@@ -175,6 +177,21 @@ export default function App() {
       data ? summarise(data, mapping, { account: scopeAccount, features: data.features.filter((f) => !hidden.includes(f)) }) : [],
     [data, mapping, scopeAccount, hidden],
   );
+  const visibleFeatures = useMemo(() => data?.features.filter((f) => !hidden.includes(f)) ?? [], [data, hidden]);
+  const modelFeature = visibleFeatures.includes(prefs.modelFeature) ? prefs.modelFeature : ALL;
+  const modelPeriod = data?.periods.some((p) => p.key === prefs.modelPeriod) ? prefs.modelPeriod : ALL;
+  const models = useMemo(
+    () =>
+      data
+        ? summariseModels(data, mapping, {
+            metric: prefs.modelMetric,
+            account: scopeAccount,
+            features: modelFeature === ALL ? visibleFeatures : [modelFeature],
+            period: modelPeriod === ALL ? null : modelPeriod,
+          })
+        : null,
+    [data, mapping, prefs.modelMetric, scopeAccount, modelFeature, visibleFeatures, modelPeriod],
+  );
   const colorOf = useCallback((f: string) => PALETTE[Math.max(0, data?.features.indexOf(f) ?? 0) % PALETTE.length], [data]);
 
   const n = data?.periods.length ?? 0;
@@ -190,6 +207,14 @@ export default function App() {
     if (!data || !n) return;
     const range = `${data.periods[0].end}_to_${data.periods[n - 1].end}`;
     download(`copilot-usage-summary_${range}.csv`, summaryToCsv(data, summaries, scopeLabel));
+  };
+
+  const exportModels = (rows: ModelRow[]) => {
+    if (!models || !models.periods.length) return;
+    const ps = models.periods;
+    const range = ps.length === 1 ? ps[0].end : `${ps[0].end}_to_${ps[ps.length - 1].end}`;
+    const feat = modelFeature === ALL ? (visibleFeatures.length === data?.features.length ? 'All features' : visibleFeatures.join(' + ')) : modelFeature;
+    download(`copilot-model-usage_${prefs.modelMetric}_${range}.csv`, modelsToCsv(models, rows, scopeLabel, feat));
   };
 
   return (
@@ -330,16 +355,47 @@ export default function App() {
             onChange={setOverride}
           />
 
-          {summaries.length > 1 && (
+          <nav className="tabs" role="tablist" aria-label="View">
+            <button role="tab" aria-selected={view === 'features'} className={`tab${view === 'features' ? ' on' : ''}`} onClick={() => setPref('view', 'features')}>
+              By feature
+            </button>
+            <button role="tab" aria-selected={view === 'models'} className={`tab${view === 'models' ? ' on' : ''}`} onClick={() => setPref('view', 'models')}>
+              By model
+            </button>
+          </nav>
+
+          {view === 'models' && models && (
+            visibleFeatures.length === 0 ? (
+              <p className="notice">All features are hidden. Select a feature above.</p>
+            ) : (
+              <ModelUsage
+                summary={models}
+                allPeriods={data.periods}
+                features={visibleFeatures}
+                metric={prefs.modelMetric}
+                feature={modelFeature}
+                period={modelPeriod}
+                min={prefs.modelMin}
+                colorOf={colorOf}
+                onMetric={(v) => setPref('modelMetric', v)}
+                onFeature={(v) => setPref('modelFeature', v)}
+                onPeriod={(v) => setPref('modelPeriod', v)}
+                onMin={(v) => setPref('modelMin', v)}
+                onExport={exportModels}
+              />
+            )
+          )}
+
+          {view === 'features' && summaries.length > 1 && (
             <section className="card overview">
               <h2>All features · {chartLabel}</h2>
               <OverviewChart summaries={summaries} periods={data.periods} metric={chartMetric} colorOf={colorOf} />
             </section>
           )}
 
-          {summaries.length === 0 && <p className="notice">All features are hidden. Select a feature above.</p>}
+          {view === 'features' && summaries.length === 0 && <p className="notice">All features are hidden. Select a feature above.</p>}
 
-          {summaries.map((s) => (
+          {view === 'features' && summaries.map((s) => (
             <section key={s.feature} className="feature" aria-label={s.feature}>
               <h2>
                 <span className="swatch" style={{ background: colorOf(s.feature) }} />

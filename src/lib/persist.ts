@@ -16,6 +16,12 @@ export interface Prefs {
   account: string;
   hidden: string[];
   overrides: Record<string, MetricTarget>;
+  /** Model usage view: metric, feature ('__all__' = all visible), period key ('__all__' = all weeks), minimum total. */
+  view: 'features' | 'models';
+  modelMetric: CanonicalMetric;
+  modelFeature: string;
+  modelPeriod: string;
+  modelMin: string;
 }
 
 export interface StoredState {
@@ -24,7 +30,7 @@ export interface StoredState {
   prefs: Prefs;
 }
 
-export const DEFAULT_PREFS: Prefs = { chartMetric: 'aiUnits', account: '__all__', hidden: [], overrides: {} };
+export const DEFAULT_PREFS: Prefs = { chartMetric: 'aiUnits', account: '__all__', hidden: [], overrides: {}, view: 'features', modelMetric: 'aiUnits', modelFeature: '__all__', modelPeriod: '__all__', modelMin: '' };
 
 const DB = 'copilot-usage-app';
 const STORE = 'state';
@@ -42,6 +48,11 @@ export function sanitizePrefs(raw: unknown): Prefs {
     account: typeof r.account === 'string' ? r.account : DEFAULT_PREFS.account,
     hidden: Array.isArray(r.hidden) ? r.hidden.filter((h): h is string => typeof h === 'string') : [],
     overrides,
+    view: r.view === 'models' ? 'models' : 'features',
+    modelMetric: METRICS.some((m) => m.id === r.modelMetric) ? (r.modelMetric as CanonicalMetric) : DEFAULT_PREFS.modelMetric,
+    modelFeature: typeof r.modelFeature === 'string' ? r.modelFeature : DEFAULT_PREFS.modelFeature,
+    modelPeriod: typeof r.modelPeriod === 'string' ? r.modelPeriod : DEFAULT_PREFS.modelPeriod,
+    modelMin: typeof r.modelMin === 'string' ? r.modelMin.slice(0, 32) : DEFAULT_PREFS.modelMin,
   };
 }
 

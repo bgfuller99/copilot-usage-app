@@ -28,7 +28,17 @@ describe('local session persistence (regression: state lost on reload/remount)',
 
   it('round-trips workbook bytes and selections so the same summary is rebuilt', async () => {
     const bytes = workbook();
-    const prefs = { chartMetric: 'billableSpend' as const, account: '__all__', hidden: ['Chat'], overrides: { Cost: 'grossUsage' as const } };
+    const prefs = {
+      ...DEFAULT_PREFS,
+      chartMetric: 'billableSpend' as const,
+      hidden: ['Chat'],
+      overrides: { Cost: 'grossUsage' as const },
+      view: 'models' as const,
+      modelMetric: 'grossUsage' as const,
+      modelFeature: 'CLI',
+      modelPeriod: '2026-09-12',
+      modelMin: '1,000',
+    };
     await saveState([{ id: 'a.xlsx:1:2', name: 'a.xlsx', bytes }], prefs);
 
     const state = await loadState();
@@ -50,7 +60,9 @@ describe('local session persistence (regression: state lost on reload/remount)',
 
   it('sanitises corrupt or tampered prefs', () => {
     expect(sanitizePrefs(null)).toEqual(DEFAULT_PREFS);
-    expect(sanitizePrefs({ chartMetric: 'bogus', hidden: [1, 'CLI'], overrides: { A: 'aiUnits', B: 'evil' }, account: 5 })).toEqual({
+    expect(
+      sanitizePrefs({ chartMetric: 'bogus', hidden: [1, 'CLI'], overrides: { A: 'aiUnits', B: 'evil' }, account: 5, view: 'x', modelMetric: 'tokens', modelMin: 7 }),
+    ).toEqual({
       ...DEFAULT_PREFS,
       hidden: ['CLI'],
       overrides: { A: 'aiUnits' },

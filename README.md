@@ -22,6 +22,15 @@ npm run preview    # serve the production build
 2. Each feature (CLI, Coding Agent, Copilot App, …) gets a table: **Metric**, one column per week, and an **N-week total**.
 3. Use **Chart metric** to choose what the bar charts show, toggle features, and pick an account if the file has several.
 4. **Export summary CSV** downloads the transformed table at full source precision. **Reset** clears everything.
+5. Switch to **By model** to rank model families (from the `Model Family` column) by any metric:
+   - **Metric**: what to rank by. Defaults to AI units consumed.
+   - **Feature**: all shown features combined, or a single feature.
+   - **Weeks**: all weeks, or a single week.
+   - **Minimum**: show only models at or above a value, e.g. `100k`, `1,000` or `$50`. The comparison is exact and includes the value itself.
+
+   The view shows a horizontal bar chart split by feature, plus a table with weekly values, the total and each model's share. **Export models CSV** downloads the models currently shown.
+
+   > The export contains **AI units, not tokens**. Token counts aren't in the file and can't be derived from AI units, so models are ranked by AI units consumed (or by another chosen metric). A model with a blank cell in a week has no value for that week; no zero is invented.
 
 ## Supported input layouts
 

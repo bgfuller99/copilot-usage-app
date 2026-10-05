@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
-import { buildDataset, buildPeriods, combineFiles, summarise } from '../aggregate';
-import { summaryToCsv } from '../csv';
-import { add, decimalFromPlain, toPlainString } from '../decimal';
+import { buildDataset, buildPeriods, combineFiles, filterModels, summarise, summariseModels } from '../aggregate';
+import { modelsToCsv, summaryToCsv } from '../csv';
+import { add, compare, decimalFromInput, decimalFromPlain, toPlainString } from '../decimal';
 import { defaultMapping, suggestMetric } from '../metrics';
 import { parseDateString, parseNumericCell, parseWorkbook, WorkbookError } from '../parse';
 
@@ -262,5 +262,76 @@ describe('CSV export', () => {
     expect(lines[0]).toBe('Scope,Feature,Metric,Unit,Week ending 2026-09-12,1-week total');
     expect(lines).toContain("All accounts,'=CLI,AI units consumed,AI units,0.1,0.1");
     expect(lines.some((l) => l.endsWith(',,unavailable') && l.includes('Billable spend'))).toBe(true);
+  });
+});
+
+describe('model usage', () => {
+  const data = buildDataset([parseWorkbook(pivotWorkbook(), 'export.xlsx')]);
+  const mapping = defaultMapping(data.metricLabels);
+  const totals = (rows: { model: string; total: { int: bigint; scale: number } }[]) => rows.map((r) => [r.model, toPlainString(r.total)]);
+
+  it('sums each model across features and weeks, largest first, with exact totals', () => {
+    const m = summariseModels(data, mapping, { metric: 'aiUnits' });
+    expect(m.state).toBe('value');
+    expect(totals(m.rows)).toEqual([
+      ['model-b', '1234568.19'],
+      ['model-a', '3000.31'],
+    ]);
+    expect(toPlainString(m.grandTotal)).toBe('1237568.5');
+    expect(m.rows[1].values.map(toPlainString)).toEqual(['1000.1', '2000.2', '0', '0.01']);
+  });
+
+  it('splits model totals by feature', () => {
+    const m = summariseModels(data, mapping, { metric: 'activeUserRecords' });
+    const a = m.rows.find((r) => r.model === 'model-a')!;
+    expect(toPlainString(a.total)).toBe('35');
+    expect(a.byFeature.map((b) => [b.feature, toPlainString(b.value)])).toEqual([
+      ['CLI', '9'],
+      ['Coding Agent', '26'],
+    ]);
+  });
+
+  it('filters by feature, week and account', () => {
+    expect(totals(summariseModels(data, mapping, { metric: 'activeUserRecords', features: ['Coding Agent'] }).rows)).toEqual([['model-a', '26']]);
+    const wk = summariseModels(data, mapping, { metric: 'aiUnits', period: '2026-09-26' });
+    expect(wk.periods.map((p) => p.key)).toEqual(['2026-09-26']);
+    // model-a's cell is blank that week, so it has no record rather than an invented zero.
+    expect(totals(wk.rows)).toEqual([['model-b', '1234567.89']]);
+    expect(summariseModels(data, mapping, { metric: 'aiUnits', account: 'Nobody' }).state).toBe('no-data');
+  });
+
+  it('applies a minimum threshold exactly (inclusive)', () => {
+    const { rows } = summariseModels(data, mapping, { metric: 'aiUnits' });
+    expect(filterModels(rows, decimalFromInput('3000.31')).map((r) => r.model)).toEqual(['model-b', 'model-a']);
+    expect(filterModels(rows, decimalFromInput('3,000.32')).map((r) => r.model)).toEqual(['model-b']);
+    expect(filterModels(rows, decimalFromInput('2m'))).toEqual([]);
+    expect(filterModels(rows, null)).toHaveLength(2);
+  });
+
+  it('parses typed thresholds and rejects junk', () => {
+    expect(toPlainString(decimalFromInput('2.5k')!)).toBe('2500');
+    expect(toPlainString(decimalFromInput(' $1,234.50 ')!)).toBe('1234.5');
+    expect(decimalFromInput('')).toBeNull();
+    expect(decimalFromInput('abc')).toBeNull();
+    expect(decimalFromInput('-5')).toBeNull();
+    expect(compare(decimalFromPlain('0.10')!, decimalFromPlain('0.1')!)).toBe(0);
+  });
+
+  it('reports metrics absent from the source as unavailable (never derives tokens or spend)', () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Week ending', 'Feature', 'Model', 'AI Units Consumed'],
+      ['2026-09-12', 'CLI', 'm', 5],
+    ]);
+    const d = buildDataset([parseWorkbook(toXlsx({ S: ws }), 'u.xlsx')]);
+    expect(summariseModels(d, defaultMapping(d.metricLabels), { metric: 'billableSpend' }).state).toBe('unavailable');
+  });
+
+  it('exports the shown models with exact values', () => {
+    const m = summariseModels(data, mapping, { metric: 'aiUnits' });
+    const csv = modelsToCsv(m, filterModels(m.rows, decimalFromInput('5000')), 'All accounts', 'All features');
+    const lines = csv.trim().split('\r\n');
+    expect(lines[0]).toBe('Scope,Features,Model,Metric,Unit,Week ending 2026-09-12,Week ending 2026-09-19,Week ending 2026-09-26,Week ending 2026-10-03,4-week total');
+    expect(lines[1]).toBe('All accounts,All features,model-b,AI units consumed,AI units,0.1,0.2,1234567.89,0,1234568.19');
+    expect(lines).toHaveLength(2);
   });
 });
