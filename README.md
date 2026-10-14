@@ -40,6 +40,8 @@ The newest week is **always assumed partial** and excluded from analysis totals,
 
 This is a **browser-local, rules-based narrative, not an external AI model**. There are no prompts, API keys or third-party data transfers. It does not invent missing metrics, infer tokens or distinct users, identify versions from model-family names, or claim that usage proves productivity/waste. Negative corrections suppress trend/share claims; upload warnings and limitations remain visible.
 
+The narrative includes **recommended next steps** and **risk flags**, each with its supporting evidence and a practical check. Model share >=50% (when multiple named models exist), consumption decline >=20% / growth >=30%, and spend/consumption divergence >=20 percentage points trigger review signals, not confirmed customer risk or budget breaches. Feature moves >=20% prompt workload investigations. All use eligible earlier periods only; model choices require quality/latency/cost validation, and spend is never forecast from a partial week.
+
 ## Supported input layouts
 
 The parser inspects every sheet and uses the first one that matches:

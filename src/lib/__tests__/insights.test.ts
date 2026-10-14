@@ -29,6 +29,33 @@ const analyse = (d: ReturnType<typeof dataset>) => analyseUsage(d, defaultMappin
 const text = (r: ReturnType<typeof analyse>) => [r.story, ...r.findings.map((f) => f.text)].join('\n');
 
 describe('browser-local usage story', () => {
+  it('ties recommendations and risk flags to evidence and practical checks', () => {
+    const r = analyse(sample());
+    expect(r.recommendations.some((a) => a.title === 'Validate model-to-task fit')).toBe(true);
+    expect(r.risks.some((a) => a.title === 'Model-concentration watch')).toBe(true);
+    expect(r.risks.some((a) => a.title === 'Consumption-growth watch')).toBe(true);
+    for (const a of [...r.recommendations, ...r.risks]) {
+      expect(a.evidence.length).toBeGreaterThan(20);
+      expect(a.action.length).toBeGreaterThan(20);
+    }
+  });
+
+  it('only flags a decline from comparable earlier data, not a small partial week', () => {
+    const rows = [100, 50, 1].map((v, i) =>
+      ['A', 'CLI', 'm', ['2026-09-12', '2026-09-19', '2026-09-26'][i], 'AI Units Consumed', v],
+    );
+    expect(analyse(dataset(rows)).risks.find((a) => a.title === 'Consumption-decline watch')?.evidence).toContain('50%');
+    rows[1][5] = 100;
+    expect(analyse(dataset(rows)).risks.some((a) => a.title === 'Consumption-decline watch')).toBe(false);
+  });
+
+  it('does not invent model concentration risk when only one named model is reported', () => {
+    const rows = [100, 100, 1].map((v, i) =>
+      ['A', 'CLI', 'm', ['2026-09-12', '2026-09-19', '2026-09-26'][i], 'AI Units Consumed', v],
+    );
+    expect(analyse(dataset(rows)).risks).toEqual([]);
+  });
+
   it('always excludes the newest week, even from shares and totals', () => {
     const a = analyse(sample('1'));
     const b = analyse(sample('999999'));
@@ -113,6 +140,7 @@ describe('browser-local usage story', () => {
     const f = analyse(dataset(rows)).findings.find((x) => x.title === 'Spend and consumption tell different stories');
     expect(f?.text).toContain('80%');
     expect(f?.text).toContain('cannot establish the cause');
+    expect(analyse(dataset(rows)).risks.some((a) => a.title === 'Spend-interpretation risk')).toBe(true);
   });
 
   it('excludes incomplete earlier daily buckets', () => {

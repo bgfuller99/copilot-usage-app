@@ -8,12 +8,20 @@ export interface Finding {
   text: string;
 }
 
+export interface Advice {
+  title: string;
+  evidence: string;
+  action: string;
+}
+
 export interface UsageInsights {
   periods: Period[];
   partialLabel: string | null;
   story: string;
   findings: Finding[];
   cautions: string[];
+  recommendations: Advice[];
+  risks: Advice[];
 }
 
 const percent = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
@@ -37,6 +45,8 @@ export function analyseUsage(
     partialLabel: latest?.label ?? null,
     story: '',
     findings: [],
+    recommendations: [],
+    risks: [],
     cautions: [
       'AI units are not tokens. Active-user records are not unique users, and do not prove adoption or productivity.',
       'Gross and billable usage are source-reported amounts, not proof of final invoiced cost. Model mix alone does not establish waste or value.',
@@ -64,6 +74,11 @@ export function analyseUsage(
   }
   if (!result.periods.length) {
     result.story = 'There is not enough earlier-period data to tell a reliable usage story. The latest week is treated as partial, so no decline or full-week forecast is inferred from it.';
+    result.recommendations.push({
+      title: 'Establish a comparable baseline',
+      evidence: 'No eligible earlier periods remain after excluding the partial latest week.',
+      action: 'Upload an export containing at least two earlier complete weeks before making usage or spend decisions.',
+    });
     return result;
   }
   const keys = new Set(result.periods.map((p) => p.key));
@@ -85,6 +100,12 @@ export function analyseUsage(
   const negative = records.some((r) => available.some((m) => mapping[r.metricLabel] === m.id) && r.value.int < 0n);
   if (negative)
     result.cautions.push('Negative values are present (possibly corrections). Concentration shares and change claims are suppressed; review the source before drawing conclusions.');
+  if (negative)
+    result.risks.push({
+      title: 'Reporting-confidence risk',
+      evidence: 'The analysed values include negative corrections.',
+      action: 'Reconcile the corrections with the source owner before using trends or shares to make commercial decisions.',
+    });
 
   if (metric && !negative && positive(total(metric.id))) {
     const ranked = summaries.flatMap((s) => {
@@ -92,6 +113,12 @@ export function analyseUsage(
       return row.total ? [{ feature: s.feature, value: row.total }] : [];
     }).sort((a, b) => compare(b.value, a.value));
     const top = ranked[0];
+    if (top && positive(top.value))
+      result.recommendations.push({
+        title: `Prioritise the ${top.feature} workload review`,
+        evidence: `${top.feature} contributes ${share(top.value, total(metric.id))} of ${metric.label.toLowerCase()} (${formatValue(top.value, metric.kind)}).`,
+        action: 'Review its largest workloads with the team first. Measure task quality and completion outcomes alongside consumption before changing defaults or setting limits.',
+      });
     if (top)
       result.findings.push({
         title: 'Where usage is concentrated',
@@ -101,6 +128,18 @@ export function analyseUsage(
     const named = models.rows.filter((r) => r.model !== NO_MODEL);
     if (named.length && positive(named[0].total)) {
       const leader = named[0];
+      if (toNumber(leader.total) / toNumber(models.grandTotal) >= 0.5 && named.length > 1) {
+        result.recommendations.push({
+          title: 'Validate model-to-task fit',
+          evidence: `${leader.model} accounts for ${share(leader.total, models.grandTotal)} of ${metric.label.toLowerCase()} across the selected scope.`,
+          action: 'Sample representative tasks on this model and compare suitable alternatives for quality, latency and source-reported spend. Keep the current model where it delivers better outcomes; do not assume a cheaper substitute will be equivalent.',
+        });
+        result.risks.push({
+          title: 'Model-concentration watch',
+          evidence: `One reported model or family (${leader.model}) exceeds the 50% review threshold.`,
+          action: 'Check whether teams have tested alternative models for critical workflows. Concentration is a review signal, not evidence of waste, excessive pricing or an imminent outage.',
+        });
+      }
       result.findings.push({
         title: 'Model mix',
         text: `${leader.model} leads reported model usage with ${formatValue(leader.total, metric.kind)} ${metric.kind === 'usd' ? 'USD' : metric.label.toLowerCase()} (${share(leader.total, models.grandTotal)} of the selected total). Labels are taken from the file: model-family labels cannot reveal individual versions.`,
@@ -134,6 +173,14 @@ export function analyseUsage(
       const after = valueAt(metric.id, last);
       if (before && after && positive(before) && sameCoverage(metric.id)) {
         const delta = change(before, after);
+        if (delta <= -20 || delta >= 30)
+          result.risks.push({
+            title: delta < 0 ? 'Consumption-decline watch' : 'Consumption-growth watch',
+            evidence: `${metric.label} ${direction(delta)} ${percent.format(Math.abs(delta))}% between ${first.label} and ${last.label} (${formatValue(before, metric.kind)} → ${formatValue(after, metric.kind)}); the partial latest week is excluded.`,
+            action: delta < 0
+              ? 'Ask whether a project finished, workloads moved, or access changed. Verify with workflow outcomes and unique-user telemetry before treating this as an adoption or renewal risk.'
+              : 'Check whether growth matches an intended rollout and review budget headroom if spend is reported. Do not infer a budget breach or full-month forecast from these values alone.',
+          });
         result.findings.push({
           title: 'Earlier-week trend',
           text: `${metric.label} ${direction(delta)} ${percent.format(Math.abs(delta))}% from ${formatValue(before, metric.kind)} (${first.label}) to ${formatValue(after, metric.kind)} (${last.label}). This comparison excludes ${latest?.label}. It describes reported consumption, not a proven change in adoption.`,
@@ -156,15 +203,35 @@ export function analyseUsage(
           text: moves.map((m) => `${m.feature} ${direction(m.delta)} ${percent.format(Math.abs(m.delta))}% (${formatValue(m.before, metric.kind)} → ${formatValue(m.after, metric.kind)})`).join('; ') +
             ` between ${first.label} and ${last.label}. Small starting values can exaggerate percentage changes; ask about workload or rollout changes rather than assuming a cause.`,
         });
+      for (const move of moves.slice(0, 2))
+        result.recommendations.push({
+          title: `Investigate the ${move.feature} change`,
+          evidence: `${metric.label} ${direction(move.delta)} ${percent.format(Math.abs(move.delta))}% (${formatValue(move.before, metric.kind)} → ${formatValue(move.after, metric.kind)}) between ${first.label} and ${last.label}.`,
+          action: move.delta < 0
+            ? 'Confirm whether this reflects a completed workload, a surface change or friction using the feature. If friction is confirmed, offer targeted enablement and check again after another complete week.'
+            : 'Ask which workflows drove the increase, capture successful patterns, and review quality and spend before extending the rollout.',
+        });
     }
     const u1 = valueAt('aiUnits', first), u2 = valueAt('aiUnits', last);
     const b1 = valueAt('billableSpend', first), b2 = valueAt('billableSpend', last);
-    if (u1 && u2 && b1 && b2 && positive(u1) && positive(b1) && sameCoverage('aiUnits') && sameCoverage('billableSpend') && Math.abs(change(u1, u2) - change(b1, b2)) >= 20)
+    if (u1 && u2 && b1 && b2 && positive(u1) && positive(b1) && sameCoverage('aiUnits') && sameCoverage('billableSpend') && Math.abs(change(u1, u2) - change(b1, b2)) >= 20) {
       result.findings.push({
         title: 'Spend and consumption tell different stories',
         text: `AI units ${direction(change(u1, u2))} ${percent.format(Math.abs(change(u1, u2)))}%, while billable usage ${direction(change(b1, b2))} ${percent.format(Math.abs(change(b1, b2)))}% over the same earlier weeks. A spend change is not an equivalent adoption change: check model mix and included allowances or adjustments. The file alone cannot establish the cause.`,
       });
+      result.risks.push({
+        title: 'Spend-interpretation risk',
+        evidence: `AI-unit and billable-usage changes differ by ${percent.format(Math.abs(change(u1, u2) - change(b1, b2)))} percentage points over the same earlier weeks.`,
+        action: 'Reconcile model mix, included allowances and adjustments before forecasting cost or attributing the spend change to adoption. Validate final charges against the billing source.',
+      });
+    }
   }
+  if (!result.recommendations.length)
+    result.recommendations.push({
+      title: 'Improve the evidence before acting',
+      evidence: 'The current scope has no eligible concentration or comparable change signal.',
+      action: 'Review field mapping and date coverage, then collect comparable complete weeks. No model switch, budget change or adoption intervention is justified by this report alone.',
+    });
   if (data.notes.length)
     result.cautions.push('Review Data notes above for overlapping exports, conflicts and date coverage before relying on the conclusions.');
   result.cautions.push('Missing model/feature cells are not assumed to be actual zeros for change claims. Earlier weekly columns are assumed complete; a pivot export cannot verify their day-by-day coverage.');
