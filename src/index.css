@@ -679,3 +679,42 @@ table.summary {
 .models-body .summary td:last-child {
   color: var(--muted);
 }
+.story-lead {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.story-findings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.story-findings article {
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.usage-story h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.story-findings p {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.story-cautions {
+  padding-left: 20px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.story-cautions li {
+  margin-bottom: 8px;
+}

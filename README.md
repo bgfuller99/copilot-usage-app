@@ -32,6 +32,14 @@ npm run preview    # serve the production build
 
    > The export contains **AI units, not tokens**. Token counts aren't in the file and can't be derived from AI units, so models are ranked by AI units consumed (or by another chosen metric). A model with a blank cell in a week has no value for that week; no zero is invented.
 
+## Automated usage story
+
+After loading a workbook, **What story does the data tell?** appears at the bottom in both views. It updates for the account, shown features and field mapping, and describes consumption, feature/model concentration, earlier-week changes and spend/consumption divergence. Model-view filters do not change its scope.
+
+The newest week is **always assumed partial** and excluded from analysis totals, shares and comparisons (but retained in tables/charts/CSV). A small latest-week number never triggers a decline claim or full-week forecast. At least two contiguous earlier weekly periods are needed for trends. Earlier daily buckets with fewer than seven reported dates are also excluded; missing feature/metric cells are not treated as actual zero for feature-change claims. Earlier pivot columns are assumed complete because the file cannot establish their day coverage.
+
+This is a **browser-local, rules-based narrative, not an external AI model**. There are no prompts, API keys or third-party data transfers. It does not invent missing metrics, infer tokens or distinct users, identify versions from model-family names, or claim that usage proves productivity/waste. Negative corrections suppress trend/share claims; upload warnings and limitations remain visible.
+
 ## Supported input layouts
 
 The parser inspects every sheet and uses the first one that matches:

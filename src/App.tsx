@@ -9,6 +9,7 @@ import { FeatureChart, OverviewChart } from './components/Charts';
 import { PALETTE } from './lib/format';
 import { MappingPanel } from './components/MappingPanel';
 import { ModelUsage } from './components/ModelUsage';
+import { UsageStory } from './components/UsageStory';
 import { clearState, DEFAULT_PREFS, loadState, saveState, type Prefs, type StoredFile } from './lib/persist';
 
 interface LoadedFile {
@@ -178,6 +179,7 @@ export default function App() {
     [data, mapping, scopeAccount, hidden],
   );
   const visibleFeatures = useMemo(() => data?.features.filter((f) => !hidden.includes(f)) ?? [], [data, hidden]);
+  const insightOptions = useMemo(() => ({ account: scopeAccount, features: visibleFeatures }), [scopeAccount, visibleFeatures]);
   const modelFeature = visibleFeatures.includes(prefs.modelFeature) ? prefs.modelFeature : ALL;
   const modelPeriod = data?.periods.some((p) => p.key === prefs.modelPeriod) ? prefs.modelPeriod : ALL;
   const models = useMemo(
@@ -430,6 +432,13 @@ export default function App() {
               </div>
             </dl>
           </section>
+          <UsageStory
+            data={data}
+            mapping={mapping}
+            options={insightOptions}
+            scopeLabel={scopeLabel}
+            hasWarnings={warnings.length > 0 || files.some((f) => f.error)}
+          />
         </>
       )}
 
